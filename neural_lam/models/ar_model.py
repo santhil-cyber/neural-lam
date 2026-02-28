@@ -211,6 +211,45 @@ class ARModel(pl.LightningModule):
         """
         return self.interior_mask[:, 0].to(torch.bool)
 
+    @property
+    def has_boundary(self):
+        """
+        Check if the domain has any boundary nodes.
+
+        Returns False for global domains where all nodes are interior,
+        True for limited-area domains with boundary forcing.
+        """
+        return self.boundary_mask.sum() > 0
+
+    def apply_boundary_forcing(self, pred_state, border_state):
+        """
+        Optionally apply boundary forcing to predicted state.
+
+        For regional (limited-area) domains, overwrites boundary nodes
+        with true border state values. For global domains (no boundary
+        nodes), this is a no-op that returns the prediction unchanged.
+
+        Parameters
+        ----------
+        pred_state : torch.Tensor
+            Predicted state, shape (B, num_grid_nodes, d_f).
+        border_state : torch.Tensor
+            True state at boundary nodes, shape
+            (B, num_grid_nodes, d_f).
+
+        Returns
+        -------
+        torch.Tensor
+            State with boundary forcing applied (if applicable),
+            shape (B, num_grid_nodes, d_f).
+        """
+        if not self.has_boundary:
+            return pred_state
+        return (
+            self.boundary_mask * border_state
+            + self.interior_mask * pred_state
+        )
+
     @staticmethod
     def expand_to_batch(x, batch_size):
         """
@@ -250,10 +289,9 @@ class ARModel(pl.LightningModule):
             # state: (B, num_grid_nodes, d_f) pred_std: (B, num_grid_nodes,
             # d_f) or None
 
-            # Overwrite border with true state
-            new_state = (
-                self.boundary_mask * border_state
-                + self.interior_mask * pred_state
+            # Optionally overwrite border with true state
+            new_state = self.apply_boundary_forcing(
+                pred_state, border_state
             )
 
             prediction_list.append(new_state)
